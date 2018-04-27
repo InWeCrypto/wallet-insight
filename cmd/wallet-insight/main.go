@@ -58,12 +58,15 @@ func main() {
 	neoclient = neorpc.NewClient(conf.GetString("neo", ""))
 	interval = conf.GetInt64("interval", 10)
 
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Recovery())
 
-	go monitor()
+	go ethmonitor()
+	go neomonitor()
 
 	router.POST("/getEthBalance", GetEthBalance)
 	router.POST("/getNeoBalance", GetNeoBalance)
+
 	router.Run(":8080")
 }
 
@@ -178,7 +181,27 @@ func getAsset(address string, asset string) ([]*neorpc.UTXO, error) {
 	return neoclient.GetBalance(address, asset)
 }
 
-func monitor() {
+func neomonitor() {
+	tick := time.NewTicker(time.Duration(interval) * time.Second)
+	for {
+		select {
+		case <-tick.C:
+			for address, _ := range neobalances {
+				stat, err := neoclient.GetAccountState(address)
+				if err != nil {
+					log.Println("err:", err)
+					continue
+				}
+
+				for _, v2 := range stat.Balances {
+					neobalances[address][v2.Asset] = v2.Value
+				}
+			}
+		}
+	}
+}
+
+func ethmonitor() {
 	tick := time.NewTicker(time.Duration(interval) * time.Second)
 
 	for {
@@ -203,18 +226,6 @@ func monitor() {
 
 						ethbalances[address][asset] = hex.EncodeToString(value.Bytes())
 					}
-				}
-			}
-
-			for address, _ := range neobalances {
-				stat, err := neoclient.GetAccountState(address)
-				if err != nil {
-					log.Println("err:", err)
-					continue
-				}
-
-				for _, v2 := range stat.Balances {
-					neobalances[address][v2.Asset] = v2.Value
 				}
 			}
 		}
