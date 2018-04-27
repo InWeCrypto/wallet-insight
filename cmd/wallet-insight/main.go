@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dynamicgo/config"
@@ -135,8 +136,8 @@ func GetEthBalance(c *gin.Context) {
 
 	for k, v := range req.Address {
 
-		address := v
-		asset := req.Asset[k]
+		address := strings.ToLower(v)
+		asset := strings.ToLower(req.Asset[k])
 
 		res := addressBalances{}
 		res.Address = address
