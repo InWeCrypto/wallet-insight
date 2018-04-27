@@ -3,10 +3,10 @@ package main
 import (
 	"encoding/hex"
 	"flag"
-	"log"
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dynamicgo/config"
@@ -20,22 +20,35 @@ var logger = slf4go.Get("wallet-insight")
 
 var configpath = flag.String("conf", "./wallet-insight.json", "wallet-insight config json")
 
-var ethbalances map[string]map[string]string
-var neobalances map[string]map[string]string
+var ethbalances map[string]map[string]ETHCache
+var neobalances map[string]*NEOCache
+var ethmutex sync.Mutex
+var neomutex sync.Mutex
 
 var ethclient *ethrpc.Client
 var neoclient *neorpc.Client
 
 var interval int64
+var keepTime int64
 
 func init() {
-	neobalances = make(map[string]map[string]string)
-	ethbalances = make(map[string]map[string]string)
+	neobalances = make(map[string]*NEOCache)
+	ethbalances = make(map[string]map[string]ETHCache)
 }
 
 type addressAsset struct {
 	Address []string
 	Asset   []string
+}
+
+type NEOCache struct {
+	Time   int64
+	Values map[string]string
+}
+
+type ETHCache struct {
+	Value string
+	Time  int64
 }
 
 type addressBalances struct {
@@ -55,9 +68,12 @@ func main() {
 		return
 	}
 
+	slf4go.SetLevel(slf4go.Warn)
+
 	ethclient = ethrpc.NewClient(conf.GetString("eth", ""))
 	neoclient = neorpc.NewClient(conf.GetString("neo", ""))
 	interval = conf.GetInt64("interval", 10)
+	keepTime = conf.GetInt64("keepTime", 600)
 
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -68,54 +84,62 @@ func main() {
 	router.POST("/getEthBalance", GetEthBalance)
 	router.POST("/getNeoBalance", GetNeoBalance)
 
-	router.Run(":8080")
+	router.Run(":8000")
 }
 
 func GetNeoBalance(c *gin.Context) {
 	req := &addressAsset{}
 	err := c.BindJSON(req)
 	if err != nil {
-		log.Println(err)
+		logger.Error(err)
 		c.JSON(http.StatusBadRequest, nil)
 		return
 	}
 
-	rep := make([]addressBalances, 0)
+	rep := make([]*addressBalances, 0)
+
+	neomutex.Lock()
+	defer neomutex.Unlock()
 
 	for k, v := range req.Address {
 		address := v
 		asset := req.Asset[k]
 
-		res := addressBalances{}
+		res := &addressBalances{}
 		res.Address = address
 		res.Asset = asset
+		rep = append(rep, res)
 
-		_, ok := neobalances[address]
+		cache, ok := neobalances[address]
 		if !ok {
-			neobalances[address] = make(map[string]string)
+			cache = &NEOCache{
+				Values: make(map[string]string),
+			}
 		}
 
-		value, ok2 := neobalances[address][asset]
+		cache.Time = time.Now().Unix()
+
+		value, ok2 := cache.Values[asset]
+
 		if !ok2 {
 			stat, err := neoclient.GetAccountState(address)
 			if err != nil {
-				log.Println("err:", err)
+				logger.Error(err)
 				continue
 			}
 
 			for _, v2 := range stat.Balances {
 				if v2.Asset == asset {
 					res.Value = v2.Value
+					break
 				}
-
-				neobalances[address][v2.Asset] = v2.Value
 			}
 
 		} else {
 			res.Value = value
 		}
 
-		rep = append(rep, res)
+		neobalances[address] = cache
 	}
 
 	c.JSON(http.StatusOK, rep)
@@ -127,59 +151,63 @@ func GetEthBalance(c *gin.Context) {
 
 	err := c.BindJSON(req)
 	if err != nil {
-		log.Println(err)
+		logger.Error(err)
 		c.JSON(http.StatusBadRequest, nil)
 		return
 	}
 
-	rep := make([]addressBalances, 0)
+	rep := make([]*addressBalances, 0)
+
+	ethmutex.Lock()
+	defer ethmutex.Unlock()
 
 	for k, v := range req.Address {
 
 		address := strings.ToLower(v)
 		asset := strings.ToLower(req.Asset[k])
 
-		res := addressBalances{}
+		res := &addressBalances{}
 		res.Address = address
 		res.Asset = asset
 
+		rep = append(rep, res)
+
 		_, ok := ethbalances[address]
 		if !ok {
-			ethbalances[address] = make(map[string]string)
+			ethbalances[address] = make(map[string]ETHCache)
 		}
 
-		value, ok2 := ethbalances[address][asset]
+		cache, ok2 := ethbalances[address][asset]
+
+		cache.Time = time.Now().Unix()
+
 		if !ok2 {
 			if asset == "eth" {
 				value, err := ethclient.GetBalance(address)
 				if err != nil {
-					log.Println("err:", err)
+					logger.Error(err)
 					continue
 				}
 
-				ethbalances[address][asset] = hex.EncodeToString(((*big.Int)(value)).Bytes())
+				res.Value = "0x" + hex.EncodeToString(((*big.Int)(value)).Bytes())
+
 			} else {
 				value, err := ethclient.GetTokenBalance(asset, address)
 				if err != nil {
-					log.Println("err:", err)
+					logger.Error(err)
 					continue
 				}
-
-				ethbalances[address][asset] = hex.EncodeToString(value.Bytes())
+				res.Value = "0x" + hex.EncodeToString(value.Bytes())
 			}
-			res.Value = ethbalances[address][asset]
 		} else {
-			res.Value = value
+			res.Value = cache.Value
 		}
 
-		rep = append(rep, res)
+		ethbalances[address][asset] = cache
+
 	}
 
 	c.JSON(http.StatusOK, rep)
-}
-
-func getAsset(address string, asset string) ([]*neorpc.UTXO, error) {
-	return neoclient.GetBalance(address, asset)
 }
 
 func neomonitor() {
@@ -187,17 +215,35 @@ func neomonitor() {
 	for {
 		select {
 		case <-tick.C:
-			for address, _ := range neobalances {
+
+			neomutex.Lock()
+			now := time.Now().Unix()
+
+			dels := make([]string, 0)
+
+			for address, cache := range neobalances {
+				if keepTime+cache.Time < now {
+					dels = append(dels, address)
+					continue
+				}
+
 				stat, err := neoclient.GetAccountState(address)
 				if err != nil {
-					log.Println("err:", err)
+					logger.Error(err)
 					continue
 				}
 
 				for _, v2 := range stat.Balances {
-					neobalances[address][v2.Asset] = v2.Value
+					cache.Values[v2.Asset] = v2.Value
 				}
 			}
+
+			for _, v := range dels {
+				delete(neobalances, v)
+			}
+
+			neomutex.Unlock()
+			logger.DebugF("neo len:%d", len(neobalances))
 		}
 	}
 }
@@ -208,27 +254,60 @@ func ethmonitor() {
 	for {
 		select {
 		case <-tick.C:
+			ethmutex.Lock()
+
+			now := time.Now().Unix()
+
+			dels := make([]string, 0)
+
 			for address, _ := range ethbalances {
-				for asset, _ := range ethbalances[address] {
+
+				delAssets := make([]string, 0)
+
+				for asset, cache := range ethbalances[address] {
+					if keepTime+cache.Time < now {
+						delAssets = append(delAssets, asset)
+						continue
+					}
+
 					if asset == "eth" {
 						value, err := ethclient.GetBalance(address)
 						if err != nil {
-							log.Println("err:", err)
+							logger.Error(err)
 							continue
 						}
 
-						ethbalances[address][asset] = hex.EncodeToString(((*big.Int)(value)).Bytes())
+						cache.Value = "0x" + hex.EncodeToString(((*big.Int)(value)).Bytes())
+
+						ethbalances[address][asset] = cache
 					} else {
 						value, err := ethclient.GetTokenBalance(asset, address)
 						if err != nil {
-							log.Println("err:", err)
+							logger.Error(err)
 							continue
 						}
 
-						ethbalances[address][asset] = hex.EncodeToString(value.Bytes())
+						cache.Value = "0x" + hex.EncodeToString(value.Bytes())
+
+						ethbalances[address][asset] = cache
 					}
 				}
+
+				for _, v := range delAssets {
+					delete(ethbalances[address], v)
+				}
+
+				if len(ethbalances[address]) == 0 {
+					dels = append(dels, address)
+				}
 			}
+
+			for _, v := range dels {
+				delete(ethbalances, v)
+			}
+
+			ethmutex.Unlock()
+			logger.DebugF("eth len:%d", len(ethbalances))
 		}
 	}
 }

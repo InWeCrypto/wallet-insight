@@ -42,7 +42,7 @@ func (client *Client) call(method string, result interface{}, args ...interface{
 		buff.WriteString(fmt.Sprintf("\targ(%d): %v\n", i, string(data)))
 	}
 
-	//	client.Debug(buff.String())
+	client.Debug(buff.String())
 
 	response, err := client.jsonrpcclient.Call(method, args...)
 
@@ -61,7 +61,7 @@ func (client *Client) call(method string, result interface{}, args ...interface{
 	buff.WriteString(fmt.Sprintf("jsonrpc call: %s\n", method))
 	buff.WriteString(fmt.Sprintf("\tresult: %s\n", responsedata))
 
-	//	client.Debug(buff.String())
+	client.Debug(buff.String())
 
 	return response.GetObject(result)
 }
