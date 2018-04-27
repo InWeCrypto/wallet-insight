@@ -58,6 +58,8 @@ func main() {
 		return
 	}
 
+	slf4go.SetLevel(slf4go.Warn)
+
 	ethclient = ethrpc.NewClient(conf.GetString("eth", ""))
 	neoclient = neorpc.NewClient(conf.GetString("neo", ""))
 	interval = conf.GetInt64("interval", 10)
