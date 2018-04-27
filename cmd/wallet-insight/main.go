@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dynamicgo/config"
@@ -22,6 +23,8 @@ var configpath = flag.String("conf", "./wallet-insight.json", "wallet-insight co
 
 var ethbalances map[string]map[string]string
 var neobalances map[string]map[string]string
+var ethmutex sync.Mutex
+var neomutex sync.Mutex
 
 var ethclient *ethrpc.Client
 var neoclient *neorpc.Client
@@ -68,7 +71,7 @@ func main() {
 	router.POST("/getEthBalance", GetEthBalance)
 	router.POST("/getNeoBalance", GetNeoBalance)
 
-	router.Run(":8080")
+	router.Run(":8000")
 }
 
 func GetNeoBalance(c *gin.Context) {
@@ -81,6 +84,9 @@ func GetNeoBalance(c *gin.Context) {
 	}
 
 	rep := make([]addressBalances, 0)
+
+	neomutex.Lock()
+	defer neomutex.Unlock()
 
 	for k, v := range req.Address {
 		address := v
@@ -134,6 +140,9 @@ func GetEthBalance(c *gin.Context) {
 
 	rep := make([]addressBalances, 0)
 
+	ethmutex.Lock()
+	defer ethmutex.Unlock()
+
 	for k, v := range req.Address {
 
 		address := strings.ToLower(v)
@@ -178,15 +187,14 @@ func GetEthBalance(c *gin.Context) {
 	c.JSON(http.StatusOK, rep)
 }
 
-func getAsset(address string, asset string) ([]*neorpc.UTXO, error) {
-	return neoclient.GetBalance(address, asset)
-}
-
 func neomonitor() {
 	tick := time.NewTicker(time.Duration(interval) * time.Second)
 	for {
 		select {
 		case <-tick.C:
+
+			neomutex.Lock()
+
 			for address, _ := range neobalances {
 				stat, err := neoclient.GetAccountState(address)
 				if err != nil {
@@ -198,6 +206,8 @@ func neomonitor() {
 					neobalances[address][v2.Asset] = v2.Value
 				}
 			}
+
+			neomutex.Unlock()
 		}
 	}
 }
@@ -208,6 +218,8 @@ func ethmonitor() {
 	for {
 		select {
 		case <-tick.C:
+			ethmutex.Lock()
+
 			for address, _ := range ethbalances {
 				for asset, _ := range ethbalances[address] {
 					if asset == "eth" {
@@ -229,6 +241,8 @@ func ethmonitor() {
 					}
 				}
 			}
+
+			ethmutex.Unlock()
 		}
 	}
 }
