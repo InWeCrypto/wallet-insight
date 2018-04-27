@@ -108,6 +108,7 @@ func GetNeoBalance(c *gin.Context) {
 		res := &addressBalances{}
 		res.Address = address
 		res.Asset = asset
+		res.Value = "0"
 		rep = append(rep, res)
 
 		cache, ok := neobalances[address]
@@ -122,6 +123,8 @@ func GetNeoBalance(c *gin.Context) {
 		value, ok2 := cache.Values[asset]
 
 		if !ok2 {
+			cache.Values[asset] = "0"
+
 			stat, err := neoclient.GetAccountState(address)
 			if err != nil {
 				logger.Error(err)
@@ -135,6 +138,7 @@ func GetNeoBalance(c *gin.Context) {
 				}
 			}
 
+			cache.Values[asset] = res.Value
 		} else {
 			res.Value = value
 		}
@@ -169,6 +173,7 @@ func GetEthBalance(c *gin.Context) {
 		res := &addressBalances{}
 		res.Address = address
 		res.Asset = asset
+		res.Value = "0x0"
 
 		rep = append(rep, res)
 
@@ -182,6 +187,8 @@ func GetEthBalance(c *gin.Context) {
 		cache.Time = time.Now().Unix()
 
 		if !ok2 {
+			cache.Value = "0x0"
+
 			if asset == "eth" {
 				value, err := ethclient.GetBalance(address)
 				if err != nil {
@@ -199,6 +206,9 @@ func GetEthBalance(c *gin.Context) {
 				}
 				res.Value = "0x" + hex.EncodeToString(value.Bytes())
 			}
+
+			cache.Value = res.Value
+
 		} else {
 			res.Value = cache.Value
 		}
