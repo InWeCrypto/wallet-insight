@@ -96,7 +96,7 @@ func GetNeoBalance(c *gin.Context) {
 		return
 	}
 
-	rep := make([]addressBalances, 0)
+	rep := make([]*addressBalances, 0)
 
 	neomutex.Lock()
 	defer neomutex.Unlock()
@@ -105,9 +105,10 @@ func GetNeoBalance(c *gin.Context) {
 		address := v
 		asset := req.Asset[k]
 
-		res := addressBalances{}
+		res := &addressBalances{}
 		res.Address = address
 		res.Asset = asset
+		rep = append(rep, res)
 
 		cache, ok := neobalances[address]
 		if !ok {
@@ -139,7 +140,6 @@ func GetNeoBalance(c *gin.Context) {
 		}
 
 		neobalances[address] = cache
-		rep = append(rep, res)
 	}
 
 	c.JSON(http.StatusOK, rep)
@@ -156,7 +156,7 @@ func GetEthBalance(c *gin.Context) {
 		return
 	}
 
-	rep := make([]addressBalances, 0)
+	rep := make([]*addressBalances, 0)
 
 	ethmutex.Lock()
 	defer ethmutex.Unlock()
@@ -166,9 +166,11 @@ func GetEthBalance(c *gin.Context) {
 		address := strings.ToLower(v)
 		asset := strings.ToLower(req.Asset[k])
 
-		res := addressBalances{}
+		res := &addressBalances{}
 		res.Address = address
 		res.Asset = asset
+
+		rep = append(rep, res)
 
 		_, ok := ethbalances[address]
 		if !ok {
@@ -203,7 +205,6 @@ func GetEthBalance(c *gin.Context) {
 
 		ethbalances[address][asset] = cache
 
-		rep = append(rep, res)
 	}
 
 	c.JSON(http.StatusOK, rep)
