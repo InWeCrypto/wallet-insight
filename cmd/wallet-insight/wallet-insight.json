@@ -1,0 +1,5 @@
+{	
+    "neo": "http://106.14.212.33:10332",
+    "eth": "https://ropsten.infura.io/oowmL0YdR9FCZyyX7NSS",
+	"interval":10
+}
